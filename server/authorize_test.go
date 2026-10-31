@@ -730,6 +730,9 @@ func TestServeAuthorize(t *testing.T) {
 			if ar.Nonce != tt.nonce {
 				t.Errorf("expected nonce '%s', got '%s'", tt.nonce, ar.Nonce)
 			}
+			if remaining := time.Until(ar.ValidTill); remaining <= 0 || remaining > AuthCodeDuration {
+				t.Errorf("expected code to expire within %v, got %v", AuthCodeDuration, remaining)
+			}
 		})
 	}
 }

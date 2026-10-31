@@ -801,6 +801,74 @@ func TestTokenExpiration(t *testing.T) {
 	}
 }
 
+// TestAuthorizationCodeExpiration tests that expired authorization codes are rejected
+func TestAuthorizationCodeExpiration(t *testing.T) {
+	tests := []struct {
+		name         string
+		codeAge      time.Duration
+		expectStatus int
+		expectError  string
+	}{
+		{
+			name:         "valid code",
+			codeAge:      1 * time.Minute,
+			expectStatus: http.StatusOK,
+		},
+		{
+			name:         "expired code",
+			codeAge:      AuthCodeDuration + time.Minute,
+			expectStatus: http.StatusBadRequest,
+			expectError:  "code expired",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := setupTestServer(t, nil)
+			srv.code["test-code"] = &AuthRequest{
+				ClientID:    "test-client",
+				RedirectURI: "https://rp.example.com/callback",
+				FunnelRP:    srv.funnelClients["test-client"],
+				ValidTill:   time.Now().Add(AuthCodeDuration - tt.codeAge),
+				RemoteUser: &apitype.WhoIsResponse{
+					Node: &tailcfg.Node{
+						ID:   1,
+						Name: "node1.example.ts.net",
+						User: tailcfg.UserID(1),
+					},
+					UserProfile: &tailcfg.UserProfile{
+						LoginName:   "user@example.com",
+						DisplayName: "Test User",
+					},
+				},
+			}
+
+			form := url.Values{
+				"grant_type":   {"authorization_code"},
+				"code":         {"test-code"},
+				"redirect_uri": {"https://rp.example.com/callback"},
+			}
+			req := httptest.NewRequest("POST", "/token", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.SetBasicAuth("test-client", "test-secret")
+
+			rr := httptest.NewRecorder()
+			srv.serveToken(rr, req)
+
+			if rr.Code != tt.expectStatus {
+				t.Errorf("expected status %d, got %d: %s", tt.expectStatus, rr.Code, rr.Body.String())
+			}
+			if tt.expectError != "" && !strings.Contains(rr.Body.String(), tt.expectError) {
+				t.Errorf("expected error %q, got: %s", tt.expectError, rr.Body.String())
+			}
+			// Codes are single use, whether or not the exchange succeeded
+			if _, exists := srv.code["test-code"]; exists {
+				t.Error("expected code to be deleted after use")
+			}
+		})
+	}
+}
+
 // TestRefreshTokenWithResources tests refresh tokens with resource downscoping (RFC 8707)
 func TestRefreshTokenWithResources(t *testing.T) {
 	tests := []struct {
